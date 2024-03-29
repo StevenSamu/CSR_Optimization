@@ -1,26 +1,44 @@
-# CSR_Optimization
+#include <string>
+#include <vector>
+#include <iostream> 
+#include <immintrin.h> // Include header for SIMD instructions (AVX)
+#include <thread>
+#include <omp.h>
 
-This is a repository used to track and build an optimized imeplementation of a CSR (compressed sparse row) sparse matrix-vector multiplication system that utilizes multi-threading, vectorization and other performance engineering techniques. 
+struct CSRMatrix {
+    std::vector<double> val;       // Values array
+    std::vector<int> row_ptr;      // Row pointer array
+    std::vector<int> col_idx;      // Column indices array
+};
 
-Performance Engineering Techniques: 
+void print_matrix(const CSRMatrix& A) {
+    // Extract matrix dimensions
+    int numRows = A.row_ptr.size() - 1;
+    int numCols = 0;
+    for (int i = 0; i < numRows; ++i) {
+        for (int j = A.row_ptr[i]; j < A.row_ptr[i + 1]; ++j) {
+            numCols = std::max(numCols, A.col_idx[j] + 1);
+        }
+    }
 
-Mulit-Threading
-- Utilize Multi-Threading to allow fast processing of individual rows in the sparse matrix. This will save significant compute time. Utilizing a sempahor/mutex based system (TBD), I will incorperate a way for processes to aknowledge if there is avaiable threads to work with. 
+    // Initialize matrix with zeros
+    std::vector<std::vector<double>> matrix(numRows, std::vector<double>(numCols, 0.0));
 
-- Initally, I went to use the standard thread library availible in C++, but with research I found evidence that implementing OpenMP instead would provide better performance as it is more geared towards large batch parallelization, which is exactly what I am implementing. Doing this brought runtime down for a 494x494 matrix from 0.0013488 microseconds to  1.44e-05 microseconds, which is significant. 
+    // Fill in non-zero values
+    for (int i = 0; i < numRows; ++i) {
+        for (int j = A.row_ptr[i]; j < A.row_ptr[i + 1]; ++j) {
+            matrix[i][A.col_idx[j]] = A.val[j];
+        }
+    }
 
-
-Vectorization (SIMD)
-- Utilized SIMD (Single Instreuction, Multiple Data) to perform the multiplication and addition of the SPMV elements efficiently, removing the need for scalar processing. This allow for higher throughput. This puts the time complexity of solving a row from O(non_zero_row_elements) to O(non_zero_row_elements/SIMD_size) and in our case SIMD_size would be 4, as this is the max amount of double values that the 256 bit AVX2 can operate with at once. 
-
-
-
-References:
-
-- https://github.com/notini/csr-formatter, utilized this formatter from .mtx to CSR format
-
-
-Old Code Versions:
+    // Print the matrix
+    for (int i = 0; i < numRows; ++i) {
+        for (int j = 0; j < numCols; ++j) {
+            std::cout << matrix[i][j] << " ";
+        }
+        std::cout << std::endl;
+    }
+}
 
 double multiplyAndSum(const std::vector<double>& A, const std::vector<double>& x) {
     // Load the vectors into AVX registers
@@ -72,26 +90,38 @@ void processRow(const CSRMatrix& A, const std::vector<double>& x, std::vector<do
 }
 
 std::vector<double> spmv(const CSRMatrix& A, const std::vector<double>& x) {
-    const unsigned int numThreads = std::thread::hardware_concurrency(); // number of possible threads avaible from my machine, 12 in my case
+    const int numThreads = omp_get_max_threads(); // Get the number of available threads
     const int numRows = A.row_ptr.size() - 1;  // Number of rows in the matrix
     std::vector<double> y(numRows, 0.0); // Initialize result vector y
 
     const int rowsPerThread = std::ceil(static_cast<double>(numRows) / numThreads);
     
-
-    // Launch a thread for each range of rows
-    std::vector<std::thread> threads; // vector of threads
+    #pragma omp parallel for num_threads(numThreads)
     for (int i = 0; i < numThreads; i++) {
         int startRow = i * rowsPerThread; 
         int endRow = std::min((i + 1) * rowsPerThread, numRows); 
-        threads.emplace_back(processRow, std::ref(A), std::ref(x), std::ref(y), startRow, endRow);
-        if (endRow == numRows) { // end row hit dont need more threads, for smaller matricies
-            break; 
+        processRow(A, x, y, startRow, endRow);
+    }
+
+    return y;
+}
+
+// Function to perform SpMV using CSR format
+std::vector<double> benchmark_spmv(const CSRMatrix& A, const std::vector<double>& x) {
+    const int numRows = A.row_ptr.size();  // Number of rows in the matrix
+    std::vector<double> y(numRows, 0.0); // Initialize result vector y
+
+    // Iterate over each row of the matrix
+    for (int i = 0; i < numRows; ++i) {
+        // Loop over non-zero elements in the current row
+        for (int j = A.row_ptr[i]; j < A.row_ptr[i + 1]; ++j) {
+            // Multiply the non-zero element with the corresponding element in x
+            y[i] += A.val[j] * x[A.col_idx[j]];
         }
     }
 
-    for (auto& thread : threads) {
-        thread.join();
-    }
     return y;
 }
+
+
+ 
