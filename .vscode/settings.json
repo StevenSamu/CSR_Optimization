@@ -61,7 +61,9 @@
         "mutex": "cpp",
         "algorithm": "cpp",
         "random": "cpp",
-        "fstream": "cpp"
+        "fstream": "cpp",
+        "map": "cpp",
+        "xtree": "cpp"
     },
     "C_Cpp.errorSquiggles": "enabled"
 }
