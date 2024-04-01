@@ -24,7 +24,7 @@ References:
 - https://github.com/notini/csr-formatter, utilized this formatter from .mtx to CSR format
 - https://kkourt.io/papers/ipdps13.pdf, referenced this paper for symetric matrices
 
-Old Code Versions:
+Old Function Versions:
 ```
 double multiplyAndSum(const std::vector<double>& A, const std::vector<double>& x) {
     // Load the vectors into AVX registers
