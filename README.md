@@ -1,28 +1,24 @@
 # CSR_Optimization
+This is a repository used to track and build an optimized implementation of a CSR (compressed sparse row) sparse matrix-vector multiplication system that utilizes multi-threading, vectorization and other performance engineering techniques.
 
-This is a repository used to track and build an optimized imeplementation of a CSR (compressed sparse row) sparse matrix-vector multiplication system that utilizes multi-threading, vectorization and other performance engineering techniques. 
+Performance Engineering Techniques:
 
-Performance Engineering Techniques: 
-
-Mulit-Threading
-- Utilize Multi-Threading to allow fast processing of individual rows in the sparse matrix. This will save significant compute time. Utilizing a sempahor/mutex based system (TBD), I will incorperate a way for processes to aknowledge if there is avaiable threads to work with. 
-
-- Initally, I went to use the standard thread library availible in C++, but with research I found evidence that implementing OpenMP instead would provide better performance as it is more geared towards large batch parallelization, which is exactly what I am implementing. Doing this brought runtime down for a 494x494 matrix from 0.0013488 microseconds to  1.44e-05 microseconds, which is significant. 
-
+Multi-Threading
+- Utilize Multi-Threading to allow fast processing of individual rows in the sparse matrix. This will save significant compute time. Utilizing a semaphore/mutex based system (TBD), I will incorporate a way for processes to acknowledge if there are available threads to work with.
+- Initially, I wanted to use the standard thread library available in C++, but with research I found evidence that implementing OpenMP instead would provide better performance as it is more geared towards large batch parallelization, which is exactly what I am implementing. Doing this brought runtime down for a 494x494 matrix from 0.0013488 microseconds to 1.44e-05 microseconds, which is significant.
 
 Vectorization (SIMD)
-- Utilized SIMD (Single Instreuction, Multiple Data) to perform the multiplication and addition of the SPMV elements efficiently, removing the need for scalar processing. This allow for higher throughput. This puts the time complexity of solving a row from O(non_zero_row_elements) to O(non_zero_row_elements/SIMD_size) and in our case SIMD_size would be 4, as this is the max amount of double values that the 256 bit AVX2 can operate with at once. 
+- Utilized SIMD (Single Instruction, Multiple Data) to perform the multiplication and addition of the SPMV elements efficiently, removing the need for scalar processing. This allows for higher throughput. This reduces the time complexity of solving a row from O(non_zero_row_elements) to O(non_zero_row_elements/SIMD_size) and in our case SIMD_size would be 4, as this is the max amount of double values that the 256-bit AVX2 can operate with at once.
 
 SSS Format for Symmetric Matrices
-- Doing reasearch into the topic, for symtetric Matrices, it doesnt make sense to use CSR formatting. The CSR format stores up to half of redunant data for Symm. matrix's thus needing to use specialized formats. This is where SSS comes in. I plan to use SSS formatting to reduce the number of computations and data processing required, reducing run time for symmetric matrices. 
+- Doing research into the topic, for symmetric matrices, it doesn't make sense to use CSR formatting. The CSR format stores up to half of redundant data for symmetric matrices, thus needing to use specialized formats. This is where SSS comes in. I plan to use SSS formatting to reduce the number of computations and data processing required, reducing run time for symmetric matrices.
 
 Inlining
-- Using inlining for the multiplyAndSum is a small yet impactful portion of the CSR and SSS code I wrote, and using it inline allowed compile time efficency as it would be directly placed within the body of the code during compile time. 
+- Using inlining for the multiplyAndSum is a small yet impactful portion of the CSR and SSS code I wrote, and using it inline allowed compile time efficiency as it would be directly placed within the body of the code during compile time.
 
 References:
-
 - https://github.com/notini/csr-formatter, utilized this formatter from .mtx to CSR format
-- https://kkourt.io/papers/ipdps13.pdf, referenced this paper for symetric matrices
+- https://kkourt.io/papers/ipdps13.pdf, referenced this paper for symmetric matrices
 
 Old Function Versions:
 ```
