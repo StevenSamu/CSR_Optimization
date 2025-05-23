@@ -78,33 +78,58 @@ int getBandwidth(CSR csr){
 }
 
 CSR assemble_csr_matrix(std::string filePath){
-	int M, N, L;
-	
-	CSR matrix;
-	std::ifstream fin(filePath);
-	// Ignore headers and comments:
-	while (fin.peek() == '%') fin.ignore(2048, '\n');
-	// Read defining parameters:
-	fin >> M >> N >> L;
-	matrix.R = M;
-	matrix.C = N;
-	
-	int last_row = 1;
-	matrix.row_ptr.push_back(1);
-	for (int l = 0; l < L; l++){
-		int row, col;
-		double data;
-		fin >> row >> col >> data;
-		matrix.col_ind.push_back(col);
-		matrix.val.push_back(data);
-		if (row > last_row){
-			last_row = row;
-			matrix.row_ptr.push_back(matrix.col_ind.size());
-		}	
-	}
-	matrix.row_ptr.push_back(matrix.col_ind.size() + 1);
-	fin.close();
-	return matrix;
+    int M, N, L;
+    CSR matrix;
+    std::ifstream fin(filePath);
+    
+    if (!fin.is_open()) {
+        std::cout << "ERROR: Cannot open file!" << std::endl;
+        abort();
+    }
+    
+    // Skip comments properly
+    std::string line;
+    while (std::getline(fin, line)) {
+        if (line.empty()) continue;
+        size_t start = line.find_first_not_of(" \t");
+        if (start == std::string::npos || line[start] != '%') {
+            // Parse dimensions from this line
+            std::istringstream iss(line);
+            if (!(iss >> M >> N >> L)) {
+                std::cout << "ERROR: Failed to parse dimensions" << std::endl;
+                abort();
+            }
+            break;
+        }
+    }
+    
+    // IMPORTANT: Set the matrix dimensions!
+    matrix.R = M;
+    matrix.C = N;
+    
+    
+    int last_row = 1;
+    matrix.row_ptr.push_back(1);
+    
+    for (int l = 0; l < L; l++){
+        int row, col;
+        double data;
+        if (!(fin >> row >> col >> data)) {
+            std::cout << "ERROR: Failed to read entry " << l << std::endl;
+            break;
+        }
+        matrix.col_ind.push_back(col);
+        matrix.val.push_back(data);
+        if (row > last_row){
+            last_row = row;
+            matrix.row_ptr.push_back(matrix.col_ind.size());
+        }	
+    }
+    matrix.row_ptr.push_back(matrix.col_ind.size() + 1);
+    
+    
+    fin.close();
+    return matrix;
 }
 
 CSR assemble_simetric_csr_matrix(std::string filePath){
