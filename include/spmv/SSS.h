@@ -7,6 +7,7 @@
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
+#include <cmath>
 
 struct SSSMatrix {
     std::vector<double> dval;         // Diagonal values
