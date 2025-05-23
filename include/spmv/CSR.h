@@ -17,18 +17,18 @@ struct CSRMatrix {
     std::vector<int> col_idx;      // Column indices array
 };
 
+// simple CSR matrix format benchmark to test against
 std::vector<double> benchmark_spmv(const CSRMatrix& A, const std::vector<double>& x) {
     const int numRows = A.row_ptr.size() - 1;
     std::vector<double> y(numRows, 0.0);
 
-    // This is the baseline - no optimizations at all
     for (int i = 0; i < numRows; ++i) {
-        int row_start = A.row_ptr[i] - 1;      // Convert 1-based to 0-based
-        int row_end = A.row_ptr[i + 1] - 1;    // Convert 1-based to 0-based
+        int row_start = A.row_ptr[i] - 1;      // Convert 1-based to 0-based for each index, i.e [1,5,9] -> [0,4,8] 
+        int row_end = A.row_ptr[i + 1] - 1;    
         
         double sum = 0.0;
         for (int j = row_start; j < row_end; ++j) {
-            sum += A.val[j] * x[A.col_idx[j] - 1];  // Convert 1-based to 0-based
+            sum += A.val[j] * x[A.col_idx[j] - 1];  
         }
         y[i] = sum;
     }
@@ -36,12 +36,12 @@ std::vector<double> benchmark_spmv(const CSRMatrix& A, const std::vector<double>
     return y;
 }
 
-// First, let's try the simplest possible optimization - just remove redundant operations
+// Simplest possible optimization - remove redundant operations
 std::vector<double> spmv_simple_opt(const CSRMatrix& A, const std::vector<double>& x) {
     const int numRows = A.row_ptr.size() - 1;
     std::vector<double> y(numRows, 0.0);
     
-    // Cache pointers to avoid vector overhead
+    // Cache pointers to avoid vector overhead, store pointer of first array element
     const double* val_ptr = A.val.data();
     const int* col_idx_ptr = A.col_idx.data();
     const int* row_ptr_ptr = A.row_ptr.data();
@@ -62,17 +62,25 @@ std::vector<double> spmv_simple_opt(const CSRMatrix& A, const std::vector<double
     return y;
 }
 
-// Convert indices once at the beginning instead of in every access
-std::vector<double> spmv_preprocess(const CSRMatrix& A, const std::vector<double>& x) {
+/*
+Convert indices once at the beginning instead of in every access
+
+My hypothisis on why this sometimes preforms worse then simple case:
+
+- Branch prediction misses due to the if (!preprocessed) check)
+- Cache locality doesnt keep the preprocessed variable in register mem calls must be made
+
+*/
+std::vector<double> spmv_preprocess(const CSRMatrix& A, const std::vector<double>& x) {    
     const int numRows = A.row_ptr.size() - 1;
     std::vector<double> y(numRows, 0.0);
     
-    // Pre-compute 0-based indices
+    // Pre-compute 0-based indices, store in static/data segment of mem rather then stack 
     static std::vector<int> row_ptr_0based;
     static std::vector<int> col_idx_0based;
     static bool preprocessed = false;
     
-    if (!preprocessed) {
+    if (!preprocessed) { // on first use, function computes the indencie difference only once rather then n times per call
         row_ptr_0based.resize(A.row_ptr.size());
         col_idx_0based.resize(A.col_idx.size());
         
@@ -88,7 +96,8 @@ std::vector<double> spmv_preprocess(const CSRMatrix& A, const std::vector<double
         
         preprocessed = true;
     }
-    
+
+    // same as simple optimization by caching the data 
     const double* val_ptr = A.val.data();
     const int* col_idx_ptr = col_idx_0based.data();
     const int* row_ptr_ptr = row_ptr_0based.data();
@@ -108,23 +117,31 @@ std::vector<double> spmv_preprocess(const CSRMatrix& A, const std::vector<double
     return y;
 }
 
-// Try minimal threading - only if it really helps
+/*
+Selective paralleization to process multiplications in parallel 
+
+My hypothosis on why this preforms worse then the simple optimization:
+
+- Parallelization suffers from thread overhead thread initlization and setup
+- No inherint load balancing/splitting data optimally between thread
+- Suffers from more cache misses since threads share a memory    
+
+*/
 std::vector<double> spmv_selective_parallel(const CSRMatrix& A, const std::vector<double>& x) {
     const int numRows = A.row_ptr.size() - 1;
     std::vector<double> y(numRows, 0.0);
     
-    // Only use parallelism if we have enough work
+    // Only use parallelism if there is enough work
     const int min_rows_per_thread = 100;
-    const int num_threads = std::min(omp_get_max_threads(), 
-                                     std::max(1, numRows / min_rows_per_thread));
-    
+    // Choose the max between the number of rows to threads and 1, then take the min between that number and max threads on the system. 
+    const int num_threads = std::min(omp_get_max_threads(), std::max(1, numRows / min_rows_per_thread));
     if (num_threads > 1) {
         #pragma omp parallel num_threads(num_threads)
         {
             int tid = omp_get_thread_num();
             int rows_per_thread = (numRows + num_threads - 1) / num_threads;
             int start = tid * rows_per_thread;
-            int end = std::min(start + rows_per_thread, numRows);
+            int end = std::min(start + rows_per_thread, numRows); // in case of noneven split of rows per thread
             
             for (int i = start; i < end; ++i) {
                 int row_start = A.row_ptr[i] - 1;
@@ -145,7 +162,62 @@ std::vector<double> spmv_selective_parallel(const CSRMatrix& A, const std::vecto
     return y;
 }
 
-// verify bencmark data to computed data of specific versions out vec
+/*
+SIMD Row Batch Processing Approach 
+
+My hypothosis on why this preforms worse then the simple optimization:
+
+- Vector operator overhead for bounds checking, when raw pointers are faster
+- SIMD overhead v.s. benefits trade-off: irregular mem access kills SIMD, setup costs > computation benefits
+- GCC Compiler is very tuned to handle auto vectorization without manual overhead 
+
+*/
+std::vector<double> spmv_simd_rows(const CSRMatrix& A, const std::vector<double>& x) {
+    const int numRows = A.row_ptr.size() - 1;
+    std::vector<double> y(numRows, 0.0);
+    
+    for (int i = 0; i < numRows; ++i) { // iterate through rows and process data in vecotrized batches
+        int row_start = A.row_ptr[i] - 1;
+        int row_end = A.row_ptr[i + 1] - 1;
+        int row_nnz = row_end - row_start;
+        
+        __m256d sum_vec = _mm256_setzero_pd();
+        int j = row_start;
+        
+        // 4 elements at a time using SIMD
+        for (; j <= row_end - 4; j += 4) {
+            // Load 4 matrix values into 256bit AVX registers
+            __m256d vals = _mm256_loadu_pd(&A.val[j]);
+            
+            // Gather 4 corresponding vector values using column indices
+            __m256d x_vals = _mm256_set_pd(
+                x[A.col_idx[j + 3] - 1],
+                x[A.col_idx[j + 2] - 1], 
+                x[A.col_idx[j + 1] - 1],
+                x[A.col_idx[j] - 1]
+            );
+            
+            // matmul: sum_vec += vals * x_vals -> sum_vec = [sum0, sum1, sum2, sum3]
+            sum_vec = _mm256_fmadd_pd(vals, x_vals, sum_vec);
+
+        }
+        
+        alignas(32) double temp[4]; // Force temp array to start at 32B divisible mem location
+        _mm256_store_pd(temp, sum_vec); // Copy SIMD register to array
+        double partial_sum = temp[0] + temp[1] + temp[2] + temp[3];
+        
+        // Handle remaining elements
+        for (; j < row_end; ++j) {
+            partial_sum += A.val[j] * x[A.col_idx[j] - 1];
+        }
+        
+        y[i] = partial_sum;
+    }
+    
+    return y;
+}
+
+// verify benchmark data to computed data of specific versions out vec
 bool verify_results(const std::vector<double>& y1, const std::vector<double>& y2, double tolerance) {
     
     if (y1.size() != y2.size()) {
@@ -175,40 +247,4 @@ bool verify_results(const std::vector<double>& y1, const std::vector<double>& y2
     std::cout << std::left << std::fixed;
     std::cout << std::setw(std_width)<< "Run Status:" << "results match BM" << std::endl;
     return true;
-}
-
-// Function to analyze the matrix structure
-void analyze_matrix(const CSRMatrix& A) {
-    const int numRows = A.row_ptr.size() - 1;
-    int empty_rows = 0;
-    int max_row_nnz = 0;
-    int min_row_nnz = INT_MAX;
-    double avg_row_nnz = 0.0;
-    
-    std::vector<int> nnz_histogram(11, 0);  // 0, 1-10, 11-20, ..., 91-100, >100
-    
-    for (int i = 0; i < numRows; ++i) {
-        int nnz = A.row_ptr[i + 1] - A.row_ptr[i];
-        if (nnz == 0) empty_rows++;
-        max_row_nnz = std::max(max_row_nnz, nnz);
-        min_row_nnz = std::min(min_row_nnz, nnz);
-        avg_row_nnz += nnz;
-        
-        int bucket = std::min(nnz / 10, 10);
-        nnz_histogram[bucket]++;
-    }
-    
-    avg_row_nnz /= numRows;
-    
-    std::cout << "\n=== Matrix Structure Analysis ===" << std::endl;
-    std::cout << "Empty rows: " << empty_rows << std::endl;
-    std::cout << "Max non-zeros in a row: " << max_row_nnz << std::endl;
-    std::cout << "Min non-zeros in a row: " << min_row_nnz << std::endl;
-    std::cout << "Avg non-zeros per row: " << avg_row_nnz << std::endl;
-    
-    std::cout << "\nRow density histogram:" << std::endl;
-    for (int i = 0; i < 10; ++i) {
-        std::cout << "  " << (i*10) << "-" << ((i+1)*10-1) << " nnz: " << nnz_histogram[i] << " rows" << std::endl;
-    }
-    std::cout << "  >100 nnz: " << nnz_histogram[10] << " rows" << std::endl;
 }

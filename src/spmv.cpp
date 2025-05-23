@@ -33,7 +33,7 @@ int main(int argc, char* argv[]) {
     // Process user matrix information to console
     std::cout << "\n=== Matrix Information ===" << std::endl;
     std::cout << std::left << std::fixed << std::setprecision(2);
-    std::cout << std::setw(std_width) << "Matrix size:"        << sim.R << " x " << sim.C << std::endl;
+    std::cout << std::setw(std_width) << "Matrix size:"        << sim.R << "x" << sim.C << std::endl;
     std::cout << std::setw(std_width) << "Non-zero elements:"  << sim.val.size() << std::endl;
     std::cout << std::setw(std_width) << "Total elements:"     << static_cast<long long>(sim.R) * sim.C << std::endl;
     std::cout << std::setw(std_width) << "Sparsity (%):"       << (1.0 - (double)sim.val.size() / ((long long)sim.R * sim.C)) * 100 << "%" << std::endl;
@@ -44,7 +44,7 @@ int main(int argc, char* argv[]) {
     std::cout << std::setw(std_width) << "Input tolerance:"  << std::setprecision(6) << tolerance << std::endl;
 
     // Naive CSR version
-    std::cout << "\n=== Naive/Benchmark CSR (Simple Loops) ===" << std::endl;
+    std::cout << "\n=== Naive/Benchmark CSR ===" << std::endl;
     std::vector<double> y_naive;
     double naive_time = 0.0;
     for (int run = 0; run < num_runs; ++run) {
@@ -100,6 +100,20 @@ int main(int argc, char* argv[]) {
     verify_results(y_naive, y_parallel, tolerance);
     std::cout << std::setw(std_width) << "Speedup:" << naive_time / parallel_time << "x" << std::endl;
 
+
+    std::cout << "\n4. SIMD rows (4 at a time):" << std::endl;
+    double simd_time = 0.0;
+    std::vector<double> y_simd;
+    for (int run = 0; run < num_runs; ++run) {
+        auto start = std::chrono::high_resolution_clock::now();
+        y_simd = spmv_simd_rows(A, x);
+        auto end = std::chrono::high_resolution_clock::now();
+        simd_time += std::chrono::duration<double>(end - start).count();
+    }
+    simd_time /= num_runs;
+    verify_results(y_naive, y_simd, tolerance);
+    std::cout << std::setw(std_width) << "Speedup: " << naive_time / simd_time << "x" << std::endl;
+
     // Final results summary
     std::cout << "\n=== FINAL TIMING RESULTS (average of " << num_runs << " runs) ===" << std::endl;
 
@@ -124,6 +138,11 @@ int main(int argc, char* argv[]) {
     std::cout << std::left << std::setw(std_width) << "Selective parallel"
             << std::right << std::setw(std_width) << std::fixed << std::setprecision(9) << parallel_time
             << std::setw(std_width) << std::fixed << std::setprecision(2) << naive_time / parallel_time << "x" << std::endl;
+
+    std::cout << std::left << std::setw(std_width) << "SIMD Rows"
+            << std::right << std::setw(std_width) << std::fixed << std::setprecision(9) << simd_time
+            << std::setw(std_width) << std::fixed << std::setprecision(2) << naive_time / simd_time << "x" << std::endl;
+    
 
     return 0;
 }
